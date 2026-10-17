@@ -1,3 +1,5 @@
+#include "param.h"
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -101,4 +103,7 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int mask;                    // Mask of denied system calls
+  char path[MAXPATH];          // Path allowed for masked open/exec calls
+  int interposed;              // Whether a sandbox policy has been installed
 };
