@@ -23,6 +23,16 @@ sys_getpid(void)
 }
 
 uint64
+sys_consolemode(void)
+{
+  int enabled;
+
+  argint(0, &enabled);
+  console_set_raw(enabled);
+  return 0;
+}
+
+uint64
 sys_fork(void)
 {
   return kfork();
