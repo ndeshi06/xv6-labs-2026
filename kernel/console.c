@@ -1,12 +1,13 @@
 //
 // Console input and output, to the uart.
-// Reads are line at a time.
+// Reads are line at a time, except while the shell enables raw input.
 // Implements special input characters:
 //   newline -- end of line
 //   control-h -- backspace
 //   control-u -- kill line
 //   control-d -- end of file
 //   control-p -- print process list
+// In raw mode, Tab and the up/down arrow keys are returned as key events.
 //
 
 #include <stdarg.h>
@@ -24,6 +25,11 @@
 
 #define BACKSPACE 0x100       // erase the last output character
 #define C(x)      ((x) - '@') // Control-x
+
+#define KEY_UP    0x80
+#define KEY_DOWN  0x81
+#define KEY_TAB   0x82
+#define KEY_KILL  0x83
 
 //
 // send one character to the uart, but don't use
@@ -53,7 +59,28 @@ struct {
   uint r; // Read index
   uint w; // Write index
   uint e; // Edit index
+  int raw;
+  int escape;
 } cons;
+
+static void
+rawinput(int c)
+{
+  if (cons.e - cons.r < INPUT_BUF_SIZE) {
+    cons.buf[cons.e++ % INPUT_BUF_SIZE] = c;
+    cons.w = cons.e;
+    wakeup(&cons.r);
+  }
+}
+
+void
+console_set_raw(int enabled)
+{
+  acquire(&cons.lock);
+  cons.raw = enabled != 0;
+  cons.escape = 0;
+  release(&cons.lock);
+}
 
 //
 // user write() system calls to the console go here.
@@ -64,6 +91,11 @@ consolewrite(int user_src, uint64 src, int n)
 {
   char buf[32]; // move batches from user space to uart.
   int i = 0;
+  int raw;
+
+  acquire(&cons.lock);
+  raw = cons.raw;
+  release(&cons.lock);
 
   while (i < n) {
     int nn = sizeof(buf);
@@ -71,7 +103,12 @@ consolewrite(int user_src, uint64 src, int n)
       nn = n - i;
     if (either_copyin(buf, user_src, src + i, nn) == -1)
       break;
-    uartwrite(buf, nn);
+    if (raw) {
+      for (int j = 0; j < nn; j++)
+        uartputc_sync(buf[j]);
+    } else {
+      uartwrite(buf, nn);
+    }
     i += nn;
   }
 
@@ -140,19 +177,48 @@ consoleread(int user_dst, uint64 dst, int n)
 //
 // the console input interrupt handler.
 // uartintr() calls this for each input character.
-// do erase/kill processing, append to cons.buf,
-// wake up consoleread() if a whole line has arrived.
+// do erase/kill processing, append to cons.buf, and wake up consoleread().
 //
 void
 consoleintr(int c)
 {
   acquire(&cons.lock);
 
+  if (cons.raw && cons.escape) {
+    if (cons.escape == 1 && c == '[') {
+      cons.escape = 2;
+      release(&cons.lock);
+      return;
+    }
+    if (cons.escape == 2 && (c == 'A' || c == 'B')) {
+      rawinput(c == 'A' ? KEY_UP : KEY_DOWN);
+      cons.escape = 0;
+      release(&cons.lock);
+      return;
+    }
+    cons.escape = 0;
+  }
+  if (cons.raw && c == '\x1b') {
+    cons.escape = 1;
+    release(&cons.lock);
+    return;
+  }
+
   switch (c) {
   case C('P'): // Print process list.
     procdump();
     break;
+  case '\t':
+    if (cons.raw) {
+      rawinput(KEY_TAB);
+      break;
+    }
+    goto default_input;
   case C('U'): // Kill line.
+    if (cons.raw) {
+      rawinput(KEY_KILL);
+      break;
+    }
     while (cons.e != cons.w &&
            cons.buf[(cons.e - 1) % INPUT_BUF_SIZE] != '\n') {
       cons.e--;
@@ -161,22 +227,31 @@ consoleintr(int c)
     break;
   case C('H'): // Backspace
   case '\x7f': // Delete key
+    if (cons.raw) {
+      rawinput('\b');
+      break;
+    }
     if (cons.e != cons.w) {
       cons.e--;
       consputc(BACKSPACE);
     }
     break;
   default:
+  default_input:
     if (c != 0 && cons.e - cons.r < INPUT_BUF_SIZE) {
       c = (c == '\r') ? '\n' : c;
 
-      // echo back to the user.
-      consputc(c);
+      if (!cons.raw)
+        consputc(c);
 
       // store for consumption by consoleread().
       cons.buf[cons.e++ % INPUT_BUF_SIZE] = c;
 
-      if (c == '\n' || c == C('D') || cons.e - cons.r == INPUT_BUF_SIZE) {
+      if (cons.raw) {
+        cons.w = cons.e;
+        wakeup(&cons.r);
+      } else if (c == '\n' || c == C('D') ||
+                 cons.e - cons.r == INPUT_BUF_SIZE) {
         // wake up consoleread() if a whole line (or end-of-file)
         // has arrived.
         cons.w = cons.e;
