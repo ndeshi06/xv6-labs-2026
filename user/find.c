@@ -6,9 +6,8 @@
 #include "kernel/param.h"
 
 void
-find(char *path, char **argv)
+find(char *path, char *name, char **cmd)
 {
-  char *name = argv[2];
   char buf[512], *p;
   int fd;
   struct dirent de;
@@ -40,49 +39,53 @@ find(char *path, char **argv)
     if (de.inum == 0)
       continue;
 
+    if (strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
+      continue;
+
     memmove(p, de.name, DIRSIZ);
     p[DIRSIZ] = '\0';
-
-    if (strcmp(p, "./.") == 0 || strcmp(p, "./..") == 0 ||
-        strcmp(p, ".") == 0 || strcmp(p, "..") == 0)
-      continue;
 
     if (stat(buf, &st) < 0)
       continue;
 
-    char filename[DIRSIZ + 1];
-    memmove(filename, de.name, DIRSIZ);
-    filename[DIRSIZ] = '\0';
-
-    if (strcmp(filename, name) == 0) {
-      if (argv[3] && strcmp(argv[3], "-exec") == 0) {
+    if (strcmp(de.name, name) == 0) {
+      if (cmd == 0) {
+        printf("%s\n", buf);
+      } else {
         char *args[MAXARG];
-        int i = 4, j = 0;
+        int i = 0;
 
-        while (argv[i] && j < MAXARG - 2)
-          args[j++] = argv[i++];
+        while (cmd[i] && i < MAXARG - 2) {
+          args[i] = cmd[i];
+          i++;
+        }
 
-        args[j++] = buf;
-        args[j] = 0;
+        args[i++] = buf;
+        args[i] = 0;
 
         int pid = fork();
         if (pid == 0) {
           exec(args[0], args);
           fprintf(2, "find: exec failed\n");
           exit(1);
-        } else if (pid > 0) {
-          wait(0);
         }
-      } else {
-        printf("%s\n", buf);
+
+        if (pid > 0)
+          wait(0);
       }
     }
 
     if (st.type == T_DIR)
-      find(buf, argv);
+      find(buf, name, cmd);
   }
 
   close(fd);
+}
+
+void
+find_exec(char *path, char *name, char **cmd)
+{
+  find(path, name, cmd);
 }
 
 int
@@ -93,16 +96,14 @@ main(int argc, char *argv[])
     exit(1);
   }
 
-  if (argc > 3 && strcmp(argv[3], "-exec") != 0) {
+  if (argc == 3) {
+    find(argv[1], argv[2], 0);
+  } else if (strcmp(argv[3], "-exec") == 0 && argc >= 5) {
+    find_exec(argv[1], argv[2], &argv[4]);
+  } else {
     fprintf(2, "Usage: find path filename [-exec cmd ...]\n");
     exit(1);
   }
 
-  if (argc > 3 && strcmp(argv[3], "-exec") == 0 && argc < 5) {
-    fprintf(2, "find: missing command after -exec\n");
-    exit(1);
-  }
-
-  find(argv[1], argv);
   exit(0);
 }
