@@ -5,13 +5,12 @@
 
 #define HEAP_PAGES 32
 #define SECRET_LEN 8
-#define MSG "Here it is: "
+#define MSG        "Here it is: "
 
 static int
 is_alnum(char c)
 {
-  return (c >= '0' && c <= '9') ||
-         (c >= 'A' && c <= 'Z') ||
+  return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
          (c >= 'a' && c <= 'z');
 }
 
