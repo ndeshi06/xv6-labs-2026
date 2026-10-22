@@ -23,6 +23,24 @@ sys_getpid(void)
 }
 
 uint64
+sys_interpose(void)
+{
+  struct proc *p = myproc();
+  int mask;
+
+  if (p->interposed)
+    return -1;
+  argint(0, &mask);
+  if (argstr(1, p->path, sizeof(p->path)) < 0) {
+    p->path[0] = 0;
+    return -1;
+  }
+  p->mask = mask;
+  p->interposed = 1;
+  return 0;
+}
+
+uint64
 sys_fork(void)
 {
   return kfork();
