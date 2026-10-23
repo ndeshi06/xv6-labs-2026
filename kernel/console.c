@@ -26,10 +26,10 @@
 #define BACKSPACE 0x100       // erase the last output character
 #define C(x)      ((x) - '@') // Control-x
 
-#define KEY_UP    0x80
-#define KEY_DOWN  0x81
-#define KEY_TAB   0x82
-#define KEY_KILL  0x83
+#define KEY_UP   0x80
+#define KEY_DOWN 0x81
+#define KEY_TAB  0x82
+#define KEY_KILL 0x83
 
 //
 // send one character to the uart, but don't use

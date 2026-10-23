@@ -13,15 +13,15 @@
 #define LIST  4
 #define BACK  5
 
-#define MAXARGS 10
-#define HISTORY_SIZE 10
+#define MAXARGS         10
+#define HISTORY_SIZE    10
 #define MAX_COMPLETIONS 200
 
-#define KEY_UP    0x80
-#define KEY_DOWN  0x81
-#define KEY_TAB   0x82
-#define KEY_KILL  0x83
-#define C(x)      ((x) - '@')
+#define KEY_UP   0x80
+#define KEY_DOWN 0x81
+#define KEY_TAB  0x82
+#define KEY_KILL 0x83
+#define C(x)     ((x) - '@')
 
 struct cmd {
   int type;
@@ -119,9 +119,8 @@ is_executable(const char *name)
   fd = open(path, O_RDONLY);
   if (fd < 0)
     return 0;
-  ok = read(fd, magic, sizeof(magic)) == sizeof(magic) &&
-       magic[0] == 0x7f && magic[1] == 'E' &&
-       magic[2] == 'L' && magic[3] == 'F';
+  ok = read(fd, magic, sizeof(magic)) == sizeof(magic) && magic[0] == 0x7f &&
+       magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
   close(fd);
   return ok;
 }
@@ -136,8 +135,7 @@ collect_completions(const char *prefix, int prefix_len, int command)
   fd = open(command ? "/" : ".", O_RDONLY);
   if (fd < 0)
     return 0;
-  while (read(fd, &de, sizeof(de)) == sizeof(de) &&
-         count < MAX_COMPLETIONS) {
+  while (read(fd, &de, sizeof(de)) == sizeof(de) && count < MAX_COMPLETIONS) {
     if (de.inum == 0)
       continue;
     memmove(name, de.name, DIRSIZ);

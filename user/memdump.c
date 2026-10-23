@@ -115,9 +115,12 @@ memdump(char *fmt, char *data, int len)
       break;
     }
     case 'S': {
-      if (cntByte == 0)
-        printf("memdump: not enough data for 'S'\n"), exit(1);
-      printf("%s\n", data);
+      int i = 0;
+      while (i < cntByte && data[i] != '\0')
+        ++i;
+      for (int j = 0; j < i; ++j)
+        printf("%c", data[j]);
+      printf("\n");
       data += cntByte;
       cntByte = 0;
       break;
