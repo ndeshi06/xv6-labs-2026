@@ -9,6 +9,7 @@
 # ./test-xv6.py log (runs the log crash test)
 
 import argparse, os, inspect, re, signal, subprocess, sys, time
+sys.stdout.reconfigure(line_buffering=True)
 from subprocess import run
 
 parser = argparse.ArgumentParser()
@@ -25,7 +26,9 @@ class QEMU(object):
         q = ["make", "qemu"]
         self.proc = subprocess.Popen(q, stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE,
-                                      stderr=subprocess.STDOUT)
+                                      stderr=subprocess.STDOUT,
+                                      start_new_session=True)
+        os.set_blocking(self.proc.stdout.fileno(), False)
         self.output = ""
         self.outbytes = bytearray()       
         time.sleep(1)
@@ -46,7 +49,7 @@ class QEMU(object):
     def save_output(self):
       try:
         with open("test-xv6.out", "w") as f:
-            f.write(self.out)
+            f.write(self.output)
             f.close()
       except OSError as e:
         print("Provided a bad results path. Error:", e)     
@@ -67,17 +70,35 @@ class QEMU(object):
         os.kill(kids[0], signal.SIGKILL)
 
     def stop(self):
-        self.proc.terminate()
+        try:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            self.proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self.proc.wait()
 
     def read(self):
-        buf = os.read(self.proc.stdout.fileno(), 4096)
-        self.outbytes.extend(buf)
+        fd = self.proc.stdout.fileno()
+        while True:
+            try:
+                buf = os.read(fd, 4096)
+            except BlockingIOError:
+                break
+            if not buf:
+                break
+            self.outbytes.extend(buf)
         self.output = self.outbytes.decode("utf-8", "replace")
 
     def lines(self):
         return self.output.splitlines()
 
-    def error(self):
+    def error(self, regexps=()):
         print("FAIL: match failed", regexps)
         self.save_output()
         self.stop()
@@ -91,7 +112,7 @@ class QEMU(object):
                 print(line)
                 last = i
         if last == -1 and exit:
-            self.error()
+            self.error(regexps)
         l = ""
         if last >= 0:
             l = lines[last]
@@ -103,11 +124,23 @@ class QEMU(object):
             time.sleep(1)
             timeleft = deadline - time.time()
             if timeleft < 0:
-                self.error()
+                self.error(regexps)
             self.read()
             ok, _ = self.match(*regexps, exit=False)
             if ok:
                 return
+
+            failed, line = self.match(
+                r".*sbrk de-allocation didn't really deallocate.*",
+                r".*panic:.*",
+                exit=False,
+            )
+            if failed:
+                self.error((line,))
+
+            if self.proc.poll() is not None:
+                self.error(regexps)
+
             ok, line = self.match(progress, exit=False)
             if ok:
                 print(line)
