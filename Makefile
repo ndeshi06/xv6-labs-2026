@@ -210,9 +210,10 @@ UPROGS=\
 ifeq ($(LAB),syscall)
 UPROGS += \
 	$U/_attack\
-	$U/_secret\
 	$U/_sandbox\
-	$U/_sbtest
+	$U/_sbtest\
+	$U/_bonus\
+	$U/_secret
 endif
 
 ifeq ($(LAB),traps)
