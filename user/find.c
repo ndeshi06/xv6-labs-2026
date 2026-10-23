@@ -98,7 +98,7 @@ main(int argc, char *argv[])
 
   if (argc == 3) {
     find(argv[1], argv[2], 0);
-  } else if (strcmp(argv[3], "-exec") == 0 && argc >= 5) {
+  } else if (argc >= 5 && strcmp(argv[3], "-exec") == 0) {
     find_exec(argv[1], argv[2], &argv[4]);
   } else {
     fprintf(2, "Usage: find path filename [-exec cmd ...]\n");
