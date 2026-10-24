@@ -1,0 +1,313 @@
+diff --git a/Makefile b/Makefile
+index 0e81840..00276f7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -210,6 +210,9 @@ UPROGS=\
+ ifeq ($(LAB),syscall)
+ UPROGS += \
+ 	$U/_attack\
++	$U/_sandbox\
++	$U/_sbtest\
++	$U/_bonus\
+ 	$U/_secret
+ endif
+ 
+diff --git a/kernel/proc.c b/kernel/proc.c
+index f4c1668..e9037f7 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -167,6 +167,9 @@ freeproc(struct proc *p)
+   p->chan = 0;
+   p->killed = 0;
+   p->xstate = 0;
++  p->mask = 0;
++  p->path[0] = 0;
++  p->interposed = 0;
+   p->state = UNUSED;
+ }
+ 
+@@ -274,6 +277,9 @@ kfork(void)
+     return -1;
+   }
+   np->sz = p->sz;
++  np->mask = p->mask;
++  safestrcpy(np->path, p->path, sizeof(np->path));
++  np->interposed = p->interposed;
+ 
+   // copy saved user registers.
+   *(np->trapframe) = *(p->trapframe);
+@@ -606,6 +612,12 @@ kkill(int pid)
+   for (p = proc; p < &proc[NPROC]; p++) {
+     acquire(&p->lock);
+     if (p->pid == pid) {
++      // Keep init alive; kexit() panics if init exits.
++      if (p == initproc) {
++        release(&p->lock);
++        return -1;
++      }
++
+       p->killed = 1;
+       if (p->state == SLEEPING) {
+         // Wake process from sleep().
+diff --git a/kernel/proc.h b/kernel/proc.h
+index 5603697..1d71493 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -1,3 +1,5 @@
++#include "param.h"
++
+ // Saved registers for kernel context switches.
+ struct context {
+   uint64 ra;
+@@ -101,4 +103,7 @@ struct proc {
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++  int mask;                    // Mask of denied system calls
++  char path[MAXPATH];          // Path allowed for masked open/exec calls
++  int interposed;              // Whether a sandbox policy has been installed
+ };
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index 1800f20..14a118c 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -103,6 +103,7 @@ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
+ extern uint64 sys_sync(void);
++extern uint64 sys_interpose(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -130,6 +131,7 @@ static uint64 (*syscalls[])(void) = {
+   [SYS_mkdir]   = sys_mkdir,
+   [SYS_close]   = sys_close,
+   [SYS_sync]    = sys_sync,
++  [SYS_interpose] = sys_interpose,
+   // clang-format on
+ };
+ 
+@@ -143,7 +145,19 @@ syscall(void)
+   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+     // Use num to lookup the system call function for num, call it,
+     // and store its return value in p->trapframe->a0
+-    p->trapframe->a0 = syscalls[num]();
++    int denied = num < 32 && (((uint)p->mask & (1U << num)) != 0);
++
++    if (num == SYS_interpose)
++      denied = 0;
++    if (denied && (num == SYS_open || num == SYS_exec) &&
++        !(p->path[0] == '-' && p->path[1] == 0)) {
++      char path[MAXPATH];
++
++      if (fetchstr(p->trapframe->a0, path, sizeof(path)) >= 0 &&
++          strncmp(path, p->path, MAXPATH) == 0)
++        denied = 0;
++    }
++    p->trapframe->a0 = denied ? -1 : syscalls[num]();
+   } else {
+     printk("%d %s: unknown sys call %d\n", p->pid, p->name, num);
+     p->trapframe->a0 = -1;
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index 5a4a39f..85e7599 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -1,23 +1,24 @@
+ // System call numbers
+-#define SYS_fork   1
+-#define SYS_exit   2
+-#define SYS_wait   3
+-#define SYS_pipe   4
+-#define SYS_read   5
+-#define SYS_kill   6
+-#define SYS_exec   7
+-#define SYS_fstat  8
+-#define SYS_chdir  9
+-#define SYS_dup    10
+-#define SYS_getpid 11
+-#define SYS_sbrk   12
+-#define SYS_pause  13
+-#define SYS_uptime 14
+-#define SYS_open   15
+-#define SYS_write  16
+-#define SYS_mknod  17
+-#define SYS_unlink 18
+-#define SYS_link   19
+-#define SYS_mkdir  20
+-#define SYS_close  21
+-#define SYS_sync   22
++#define SYS_fork      1
++#define SYS_exit      2
++#define SYS_wait      3
++#define SYS_pipe      4
++#define SYS_read      5
++#define SYS_kill      6
++#define SYS_exec      7
++#define SYS_fstat     8
++#define SYS_chdir     9
++#define SYS_dup       10
++#define SYS_getpid    11
++#define SYS_sbrk      12
++#define SYS_pause     13
++#define SYS_uptime    14
++#define SYS_open      15
++#define SYS_write     16
++#define SYS_mknod     17
++#define SYS_unlink    18
++#define SYS_link      19
++#define SYS_mkdir     20
++#define SYS_close     21
++#define SYS_sync      22
++#define SYS_interpose 23
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index cd25557..74f7715 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -22,6 +22,24 @@ sys_getpid(void)
+   return myproc()->pid;
+ }
+ 
++uint64
++sys_interpose(void)
++{
++  struct proc *p = myproc();
++  int mask;
++
++  if (p->interposed)
++    return -1;
++  argint(0, &mask);
++  if (argstr(1, p->path, sizeof(p->path)) < 0) {
++    p->path[0] = 0;
++    return -1;
++  }
++  p->mask = mask;
++  p->interposed = 1;
++  return 0;
++}
++
+ uint64
+ sys_fork(void)
+ {
+diff --git a/user/attack.c b/user/attack.c
+index 52189d7..a2e7b20 100644
+--- a/user/attack.c
++++ b/user/attack.c
+@@ -3,10 +3,73 @@
+ #include "user/user.h"
+ #include "kernel/riscv.h"
+ 
++#define HEAP_PAGES 32
++#define MSG        "Here it is: "
++
++static int
++is_alnum(char c)
++{
++  return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
++         (c >= 'a' && c <= 'z');
++}
++
++static int
++scan_region(char *base, uint64 len)
++{
++  uint64 msglen = sizeof(MSG) - 1;
++  uint64 i;
++
++  for (i = 0; i + msglen < len; i++) {
++    uint64 start, end;
++
++    if (memcmp(base + i, MSG, msglen) != 0)
++      continue;
++
++    start = i + msglen;
++    end = start;
++
++    // Doc cac ky tu chu hoac so sau chuoi danh dau.
++    while (end < len && is_alnum(base[end]))
++      end++;
++
++    // Secret phai co it nhat mot ky tu va ket thuc bang '\0'.
++    if (end > start && end < len && base[end] == '\0') {
++      printf("%s\n", base + start);
++      return 1;
++    }
++  }
++
++  return 0;
++}
++
+ int
+ main(int argc, char *argv[])
+ {
+-  // Your code here.
++  char *heap;
++  uint64 heap_start;
++
++  (void)argc;
++  (void)argv;
++
++  heap = sbrk(HEAP_PAGES * PGSIZE);
++  if (heap == (char *)-1)
++    exit(1);
++
++  heap_start = (uint64)heap;
++
++  // Uu tien quet vung heap vua cap phat.
++  if (scan_region(heap, HEAP_PAGES * PGSIZE))
++    exit(0);
++
++  // Quet trang stack co the truy cap.
++  if (heap_start >= PGSIZE &&
++      scan_region((char *)(heap_start - PGSIZE), PGSIZE))
++    exit(0);
++
++  // Quet vung chuong trinh da nap.
++  if (heap_start >= 3 * PGSIZE &&
++      scan_region((char *)PGSIZE, heap_start - 3 * PGSIZE))
++    exit(0);
+ 
+   exit(1);
+ }
+diff --git a/user/bonus.c b/user/bonus.c
+new file mode 100644
+index 0000000..b51b91a
+--- /dev/null
++++ b/user/bonus.c
+@@ -0,0 +1,17 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int result;
++
++  (void)argc;
++  (void)argv;
++
++  printf("bonus: calling kill(1)\n");
++  result = kill(1);
++  printf("bonus: kill(1) returned %d\n", result);
++
++  exit(0);
++}
+diff --git a/user/user.h b/user/user.h
+index 29aad59..7bb3d52 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -25,6 +25,7 @@ char *sys_sbrk(int, int);
+ int pause(int);
+ int uptime(void);
+ int sync(void);
++int interpose(int, char *);
+ 
+ // ulib.c
+ int stat(const char *, struct stat *);
+diff --git a/user/usys.pl b/user/usys.pl
+index 4d054e8..3c73f7b 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -43,3 +43,4 @@ entry("sbrk");
+ entry("pause");
+ entry("uptime");
+ entry("sync");
++entry("interpose");
