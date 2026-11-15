@@ -108,7 +108,7 @@ printk(char *fmt, ...)
       printint(va_arg(ap, uint64), 16, 0);
       i += 2;
     } else if (c0 == 'p') {
-      printptr(va_arg(ap, uint64));
+      printptr((uint64)va_arg(ap, void *));
     } else if (c0 == 'c') {
       consputc(va_arg(ap, uint));
     } else if (c0 == 's') {
@@ -149,4 +149,23 @@ void
 printkinit(void)
 {
   initlock(&pr.lock, "pr");
+}
+
+void
+backtrace(void)
+{
+  uint64 fp = r_fp();
+  uint64 stack_bottom = PGROUNDDOWN(r_sp());
+  uint64 stack_top = stack_bottom + PGSIZE;
+
+  printk("backtrace:\n");
+  while (fp >= stack_bottom + 2 * sizeof(uint64) && fp < stack_top) {
+    uint64 ra = *(uint64 *)(fp - sizeof(uint64));
+    uint64 previous_fp = *(uint64 *)(fp - 2 * sizeof(uint64));
+
+    printk("%p\n", (void *)ra);
+    if (previous_fp <= fp)
+      break;
+    fp = previous_fp;
+  }
 }
