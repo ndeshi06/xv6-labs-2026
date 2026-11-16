@@ -110,7 +110,62 @@ sys_vmprint(void)
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  uint64 start;
+  uint64 maskva;
+  int npages;
+  uint64 nbytes;
+  char *bits;
+  struct proc *p = myproc();
+
+  argaddr(0, &start);
+  argint(1, &npages);
+  argaddr(2, &maskva);
+
+  // A single kernel page can hold the result for this many user pages.
+  if (npages < 0 || npages > PGSIZE * 8)
+    return -1;
+  if (npages == 0)
+    return 0;
+
+  nbytes = (npages + 7) / 8;
+  bits = kalloc();
+  if (bits == 0)
+    return -1;
+  memset(bits, 0, PGSIZE);
+
+  // First collect the access bits and reject any range with an unmapped page.
+  // Do not clear PTE_A yet: copyout can still fail for an invalid result buffer.
+  for (int i = 0; i < npages; i++) {
+    uint64 va = start + (uint64)i * PGSIZE;
+    pte_t *pte;
+
+    if (va < start || va >= MAXVA) {
+      kfree(bits);
+      return -1;
+    }
+    pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
+        (*pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      kfree(bits);
+      return -1;
+    }
+    if (*pte & PTE_A)
+      bits[i / 8] |= 1 << (i % 8);
+  }
+
+  if (copyout(p->pagetable, p->sz, maskva, bits, nbytes) < 0) {
+    kfree(bits);
+    return -1;
+  }
+
+  // Reset the recorded state so the next call reports accesses since this one.
+  for (int i = 0; i < npages; i++) {
+    uint64 va = start + (uint64)i * PGSIZE;
+    pte_t *pte = walk(p->pagetable, va, 0);
+    *pte &= ~PTE_A;
+  }
+
+  kfree(bits);
   return 0;
 }
 #endif
