@@ -71,7 +71,6 @@ sys_pause(void)
   uint ticks0;
 
   backtrace();
-
   argint(0, &n);
   if (n < 0)
     n = 0;

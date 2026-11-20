@@ -1,5 +1,4 @@
 #include "types.h"
-#include "types.h"
 #include "riscv.h"
 #include "memlayout.h"
 #include "defs.h"
@@ -40,7 +39,7 @@ void
 backtrace(void)
 {
   uint64 fp = r_fp();
-  uint64 stack_bottom = PGROUNDDOWN(r_sp());
+  uint64 stack_bottom = PGROUNDDOWN(fp);
   uint64 stack_top = stack_bottom + PGSIZE;
 
   printk("backtrace:\n");
