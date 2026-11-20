@@ -188,6 +188,27 @@ vmprint(pagetable_t pagetable)
 }
 #endif
 
+// Return the level-1 PTE for va, allocating the level-1 page table if needed.
+static pte_t *
+walklevel1(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte = &pagetable[PX(2, va)];
+
+  if (*pte & PTE_V) {
+    if (*pte & (PTE_R | PTE_W | PTE_X))
+      panic("kmappages: level-2 leaf conflict");
+    pagetable = (pagetable_t)PTE2PA(*pte);
+  } else {
+    pagetable_t newpagetable = (pagetable_t)kalloc();
+    if (newpagetable == 0)
+      return 0;
+    memset(newpagetable, 0, PGSIZE);
+    *pte = PA2PTE(newpagetable) | PTE_V;
+    pagetable = newpagetable;
+  }
+  return &pagetable[PX(1, va)];
+}
+
 
 // add a mapping to the kernel page table.
 // only used when booting.
@@ -195,8 +216,52 @@ vmprint(pagetable_t pagetable)
 void
 kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 {
-  if (mappages(kpgtbl, va, sz, pa, perm) != 0)
+  if (kmappages(kpgtbl, va, sz, pa, perm) != 0)
     panic("kvmmap");
+}
+
+// Map kernel memory with 2 MiB leaf PTEs when the mapping permits it.
+int
+kmappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  if ((va % PGSIZE) != 0)
+    panic("kmappages: va not aligned");
+  if ((pa % PGSIZE) != 0)
+    panic("kmappages: pa not aligned");
+  if ((size % PGSIZE) != 0)
+    panic("kmappages: size not aligned");
+  if (size == 0)
+    panic("kmappages: size");
+
+  while (size > 0) {
+    if (va >= MAXVA)
+      panic("kmappages: va");
+
+    if (size >= SUPERPGSIZE &&
+        (va % SUPERPGSIZE) == 0 &&
+        (pa % SUPERPGSIZE) == 0) {
+      pte_t *pte = walklevel1(pagetable, va);
+      if (pte == 0)
+        return -1;
+      if (*pte & PTE_V)
+        panic("kmappages: remap");
+      *pte = PA2PTE(pa) | perm | PTE_V;
+      va += SUPERPGSIZE;
+      pa += SUPERPGSIZE;
+      size -= SUPERPGSIZE;
+    } else {
+      pte_t *pte = walk(pagetable, va, 1);
+      if (pte == 0)
+        return -1;
+      if (*pte & PTE_V)
+        panic("kmappages: remap");
+      *pte = PA2PTE(pa) | perm | PTE_V;
+      va += PGSIZE;
+      pa += PGSIZE;
+      size -= PGSIZE;
+    }
+  }
+  return 0;
 }
 
 // Create PTEs for virtual addresses starting at va that refer to
@@ -569,5 +634,3 @@ ismapped(pagetable_t pagetable, uint64 va)
   }
   return 0;
 }
-
-
