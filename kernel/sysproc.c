@@ -110,7 +110,44 @@ sys_vmprint(void)
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  enum { MAX_PGACCESS_PAGES = 256 };
+  struct proc *p = myproc();
+  uint64 base, maskaddr;
+  int npage;
+  char mask[(MAX_PGACCESS_PAGES + 7) / 8];
+
+  argaddr(0, &base);
+  argint(1, &npage);
+  argaddr(2, &maskaddr);
+
+  if (npage < 1 || npage > MAX_PGACCESS_PAGES || base >= MAXVA)
+    return -1;
+
+  uint64 first = PGROUNDDOWN(base);
+  if (first > MAXVA - PGSIZE ||
+      (uint64)(npage - 1) > (MAXVA - PGSIZE - first) / PGSIZE)
+    return -1;
+
+  memset(mask, 0, sizeof(mask));
+
+  for (int i = 0; i < npage; i++) {
+    pte_t *pte = walk(p->pagetable, first + (uint64)i * PGSIZE, 0);
+    if (pte == 0 || (*pte & (PTE_V | PTE_U)) != (PTE_V | PTE_U))
+      return -1;
+  }
+
+  for (int i = 0; i < npage; i++) {
+    pte_t *pte = walk(p->pagetable, first + (uint64)i * PGSIZE, 0);
+    if (*pte & PTE_A)
+      mask[i / 8] |= 1 << (i % 8);
+    *pte &= ~PTE_A;
+  }
+  sfence_vma();
+
+  uint64 masksize = (npage + 7) / 8;
+  if (copyout(p->pagetable, p->sz, maskaddr, mask, masksize) < 0)
+    return -1;
+
   return 0;
 }
 #endif
