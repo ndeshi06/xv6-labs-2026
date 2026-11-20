@@ -108,7 +108,7 @@ printk(char *fmt, ...)
       printint(va_arg(ap, uint64), 16, 0);
       i += 2;
     } else if (c0 == 'p') {
-      printptr(va_arg(ap, uint64));
+      printptr((uint64)va_arg(ap, void *));
     } else if (c0 == 'c') {
       consputc(va_arg(ap, uint));
     } else if (c0 == 's') {

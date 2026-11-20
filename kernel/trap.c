@@ -78,6 +78,22 @@ usertrap(void)
     setkilled(p);
   }
 
+  // Handle alarm on timer interrupt.
+  if (which_dev == 2 && p->alarm_interval > 0 && !p->alarm_active) {
+    p->alarm_ticks++;
+
+    if (p->alarm_ticks >= p->alarm_interval) {
+      p->alarm_ticks = 0;
+      p->alarm_active = 1;
+
+      // Save the current process state.
+      p->alarm_tf = *p->trapframe;
+
+      // Redirect execution to the alarm handler.
+      p->trapframe->epc = p->alarm_handler;
+    }
+  }
+
   if (killed(p))
     kexit(-1);
 

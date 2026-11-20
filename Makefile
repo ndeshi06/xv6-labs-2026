@@ -28,6 +28,7 @@ OBJS = \
   $K/pipe.o \
   $K/exec.o \
   $K/sysfile.o \
+  $K/backtrace.o \
   $K/kernelvec.o \
   $K/plic.o \
   $K/virtio_disk.o
@@ -144,10 +145,22 @@ $K/kernel: $(OBJS) $(OBJS_KCSAN) $K/kernel.ld
 	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) $(OBJS_KCSAN)
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
+.PHONY: backtrace-map
+
+backtrace-map: $K/kernel
+	python3 tools/gen_backtrace_map.py \
+		$(OBJDUMP) $(TOOLPREFIX)addr2line \
+		$K/kernel $K/backtrace_map.inc
+	$(MAKE) $K/backtrace.o
+	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) $(OBJS_KCSAN)
+	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
+	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
+
 $(OBJS): EXTRAFLAG := $(KCSANFLAG)
 
 $K/%.o: $K/%.c conf/lab.mk
 	$(CC) $(CFLAGS) $(EXTRAFLAG) -c -o $@ $<
+$K/backtrace.o: $K/backtrace_map.inc
 
 $K/%.o: $K/%.S conf/lab.mk
 	$(CC) -march=rv64gc -g $(DETFLAGS) -c -o $@ $<
@@ -221,7 +234,8 @@ endif
 ifeq ($(LAB),traps)
 UPROGS += \
 	$U/_call\
-	$U/_bttest
+	$U/_bttest\
+        $U/_alarmtest
 endif
 
 ifeq ($(LAB),lazy)
@@ -336,17 +350,17 @@ QEMUOPTS += -device e1000,netdev=net0,bus=pcie.0
 endif
 
 # makes a new fs.img
-qemu: check-qemu-version newfs.img $K/kernel fs.img
+qemu: check-qemu-version newfs.img backtrace-map fs.img
 	$(QEMU) $(QEMUOPTS)
 
 # runs with existing fs.img, if present
-qemu-fs: check-qemu-version $K/kernel fs.img
+qemu-fs: check-qemu-version backtrace-map fs.img
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: $K/kernel .gdbinit fs.img
+qemu-gdb: backtrace-map .gdbinit fs.img
 	@echo "*** Now run 'gdb' in another window." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 
