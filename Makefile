@@ -151,7 +151,7 @@ backtrace-map: $K/kernel
 	python3 tools/gen_backtrace_map.py \
 		$(OBJDUMP) $(TOOLPREFIX)addr2line \
 		$K/kernel $K/backtrace_map.inc
-	$(MAKE) $K/backtrace.o
+	$(MAKE) -B BACKTRACE_MAP_READY=1 $K/backtrace.o
 	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) $(OBJS_KCSAN)
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
@@ -160,7 +160,11 @@ $(OBJS): EXTRAFLAG := $(KCSANFLAG)
 
 $K/%.o: $K/%.c conf/lab.mk
 	$(CC) $(CFLAGS) $(EXTRAFLAG) -c -o $@ $<
+
+ifeq ($(BACKTRACE_MAP_READY),1)
+CFLAGS += -DBACKTRACE_MAP_READY
 $K/backtrace.o: $K/backtrace_map.inc
+endif
 
 $K/%.o: $K/%.S conf/lab.mk
 	$(CC) -march=rv64gc -g $(DETFLAGS) -c -o $@ $<
@@ -316,6 +320,7 @@ clean:
 	rm -rf *.tex *.dvi *.idx *.aux *.log *.ind *.ilg *.dSYM *.zip *.pcap \
 	*/*.o */*.d */*.asm */*.sym \
 	$K/kernel fs.img \
+	$K/backtrace_map.inc \
 	mkfs/mkfs .gdbinit \
         $U/usys.S \
 	$(UPROGS)

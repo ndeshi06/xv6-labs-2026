@@ -10,7 +10,16 @@ struct bt_entry {
   uint line;
 };
 
+#ifdef BACKTRACE_MAP_READY
 #include "backtrace_map.inc"
+#else
+static const char * const bt_functions[] = { "" };
+static const char * const bt_files[] = { "" };
+static const struct bt_entry bt_entries[] = {
+  { 0, 0, 0, 0 },
+};
+#define BT_ENTRY_COUNT 0
+#endif
 
 // Find the source information for a return address.
 static const struct bt_entry *
@@ -48,6 +57,8 @@ backtrace(void)
          fp < stack_top) {
     uint64 ra = *(uint64 *)(fp - sizeof(uint64));
     uint64 previous_fp = *(uint64 *)(fp - 2 * sizeof(uint64));
+
+    printk("%p\n", (void *)ra);
 
     const struct bt_entry *entry = lookup_backtrace(ra);
 
