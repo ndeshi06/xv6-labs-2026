@@ -149,14 +149,14 @@ walkaddr(pagetable_t pagetable, uint64 va)
 
 #if defined(LAB_PGTBL) || defined(SOL_MMAP) || defined(SOL_COW)
 static void
-vmprint_walk(pagetable_t pagetable, int level, uint64 va_prefix)
+vmprint_level(pagetable_t pagetable, int level, uint64 preflix)
 {
   for (int i = 0; i < 512; i++) {
     pte_t pte = pagetable[i];
     if ((pte & PTE_V) == 0)
       continue;
 
-    uint64 va = va_prefix | ((uint64)i << PXSHIFT(level));
+    uint64 va = preflix | ((uint64)i << PXSHIFT(level));
     if ((pte & (PTE_R | PTE_W | PTE_X)) != 0) {
       printk(" ..");
       if (level < 2)
@@ -185,7 +185,7 @@ vmprint_walk(pagetable_t pagetable, int level, uint64 va_prefix)
       printk("%p\n", (void *)va);
       if (level == 0)
         panic("vmprint: non-leaf at level 0");
-      vmprint_walk((pagetable_t)PTE2PA(pte), level - 1, va);
+      vmprint_level((pagetable_t)PTE2PA(pte), level - 1, va);
     }
   }
 }
@@ -194,7 +194,7 @@ void
 vmprint(pagetable_t pagetable)
 {
   printk("page table %p\n", pagetable);
-  vmprint_walk(pagetable, 2, 0);
+  vmprint_level(pagetable, 2, 0);
 }
 #endif
 
